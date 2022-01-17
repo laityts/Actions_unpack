@@ -1,0 +1,191 @@
+name: unpack
+
+on:
+  workflow_dispatch:
+     inputs:
+       mode:
+         description: 'Download mode(wget,aria2c,curl,axel)'
+         required: true
+         default: 'aria2c'
+       filename:
+         description: 'ROM NAME'
+         required: false
+       filelink:
+         description: 'ROM LINK'
+         required: true
+       artifact:
+         description: 'Upload to Artifact'
+         required: true
+         default: 'true'
+       treble:
+         description: 'Treble Status'
+         required: true
+         default: 'false'
+       dtbo:
+         description: 'Dtbo Unpack'
+         required: true
+         default: 'false'
+
+jobs:
+  unpack:
+    runs-on: ubuntu-18.04
+    continue-on-error: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Initialization environment
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install git openjdk-8-jdk wget curl rsync aria2 python python3 unzip device-tree-compiler brotli simg2img img2simg axel
+          pip3 install protobuf
+          pip install brotli
+
+      - id: var
+        name: Download
+        run: |
+          echo "Download"
+          if [[ ! -z "${{ github.event.inputs.filename }}" ]]; then
+              NAME="${{ github.event.inputs.filename }}"
+              if [[ ! -z "$(echo ${NAME} | grep ".zip")" ]]; then
+                  echo "::set-output name=filename::${NAME%.*}"
+                  echo "${{ github.event.inputs.filename }}"
+                  filename="${NAME%.*}"
+              else
+                  echo "::set-output name=filename::${{ github.event.inputs.filename }}"
+                  echo "Null value"
+                  filename="${{ github.event.inputs.filename }}"
+              fi
+              echo "filename: $filename"
+              if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
+                  wget ${{ github.event.inputs.filelink }} -O "${filename}.zip"
+              elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
+                  aria2c -x16 -j$(nproc) ${{ github.event.inputs.filelink }} -o "${filename}.zip"             
+              elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
+                  curl -L ${{ github.event.inputs.filelink }} -o "${filename}.zip"
+              elif [[ "${{ github.event.inputs.mode }}" == 'axel' ]]; then
+                  axel -n 16 ${{ github.event.inputs.filelink }} -o "${filename}.zip"
+              fi             
+          else
+              if [[ "${{ github.event.inputs.mode }}" == 'wget' ]]; then
+                  wget --content-disposition -c ${{ github.event.inputs.filelink }}
+              elif [[ "${{ github.event.inputs.mode }}" == 'aria2c' ]]; then
+                  aria2c -x16 -j$(nproc) ${{ github.event.inputs.filelink }}             
+              elif [[ "${{ github.event.inputs.mode }}" == 'curl' ]]; then
+                  curl -OL ${{ github.event.inputs.filelink }}
+              elif [[ "${{ github.event.inputs.mode }}" == 'axel' ]]; then
+                  axel -n 16 ${{ github.event.inputs.filelink }}
+              fi
+              NAME="$(ls -lS *.zip | head -1 | awk '{print $9}')"
+              if [ ! -z "$NAME" ]; then
+                  filename=${NAME%.*}
+              else
+                  tmp="$(find . -maxdepth 1 -type f -size +500M)"
+                  if [ ! -z "$tmp" ]; then
+                      ls -al
+                      echo "Rename"
+                      filename=$(echo $tmp | sed 's#./##')
+                      mv $filename ${filename}.zip
+                  else
+                      echo "Download error"
+                      exit 1
+                  fi
+              fi              
+              echo "::set-output name=filename::$filename"
+          fi
+          ls -al
+
+      - name: Payload Extractor
+        run: |
+          echo "Payload Dumper"
+          unzip ${{ steps.var.outputs.filename }}.zip payload.bin
+          rm -rf ${{ steps.var.outputs.filename }}.zip
+          python3 update-payload-extractor/extract.py payload.bin --output_dir ./output/
+          cd output
+          ls -al
+          cd ..
+
+      - name: Mounting system
+        if: github.event.inputs.treble == 'false'
+        continue-on-error: true
+        run: |
+          mkdir system/
+          sudo mount output/system.img system/
+          cd system
+          ls -al
+          ls system/
+          cd ..
+          sudo cp system/system/vendor/etc/fstab.qcom output/fstab.qcom
+          sudo umount system
+          sudo rm -rf system
+
+      - name: Mounting vendor
+        if: github.event.inputs.treble == 'true'
+        continue-on-error: true
+        run: |
+          mkdir vendor/
+          sudo mount output/vendor.img vendor/
+          cd vendor
+          ls -al
+          ls etc/
+          cd ..
+          sudo cp vendor/etc/fstab.qcom output/fstab.qcom
+          sudo umount vendor
+          sudo rm -rf vendor
+    
+      - name: Mkbootimg
+        run: |
+          echo "mkbooting"
+          mv output/boot.img mkbootimg/
+          cd mkbootimg
+          ./mkboot boot.img boot
+          rm boot.img
+          cd ..
+          mv mkbootimg/boot/kernel ./image.gz-dtb
+          ./split-appended-dtb image.gz-dtb
+          ls -al
+          rm image.gz-dtb
+          temp=$(ls -lS *.dtb | head -1 | awk '{print $9}')
+          echo temp: $temp
+          dtb=${temp##* }
+          dts=${dtb%.*}.dts
+          echo dtb: $dtb
+          echo dts: $dts
+          dtc -q -I dtb -O dts -o $dts $dtb
+          rm $dtb
+          echo rm: $dtb
+          mv $dts output/
+          cd mkbootimg
+          cd boot
+          cp img_info ../../output/
+          ls -al
+          cd ../../
+
+      - name: Mkdtimg
+        if: github.event.inputs.dtbo == 'true'
+        run: |
+          echo "mkdting"
+          mv output/dtbo.img dtbo2dts/
+          cd dtbo2dts
+          python dtbo2dtsi.py
+          rm dtbo.img
+          ls -al
+          cp dts*.* ../output/
+          cd ../../
+
+      - name: Packing
+        run: |
+          echo "packing"
+          cd output
+          ls -al
+          rm -f system.img vendor.img bluetooth.img abl.img cmnlib.img cmnlib64.img devcfg.img dsp.img hyp.img imagefv.img keymaster.img modem.img qupfw.img rpm.img storsec.img tz.img uefisecapp.img xbl.img xbl_config.img
+
+      - name: Upload to Artifact
+        if: github.event.inputs.artifact == 'true'
+        uses: actions/upload-artifact@v2
+        with:
+          name: output
+          path: |
+            output
+          retention-days: 7
