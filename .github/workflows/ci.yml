@@ -1,0 +1,185 @@
+name: unpack
+
+on:
+  workflow_dispatch:
+     inputs:
+       mode:
+         description: 'Download mode(aria2c,curl,axel,wget)'
+         required: true
+         default: 'aria2c'
+       output:
+         description: 'Output(wget=O)'
+         required: true
+         default: 'o'
+       filename:
+         description: 'ROM NAME'
+         required: true
+         default: 'xx.zip'
+       filelink:
+         description: 'ROM LINK'
+         required: true
+
+jobs:
+  unpack:
+    runs-on: ubuntu-18.04
+    continue-on-error: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Initialization environment
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y git openjdk-8-jdk wget curl rsync aria2 python python3 unzip device-tree-compiler brotli simg2img img2simg axel
+          pip3 install protobuf
+          pip install brotli
+
+      - id: var
+        name: Download
+        run: |
+          echo "Download"
+          NAME="${{ github.event.inputs.filename }}"
+          if [[ ! -z "$(echo ${NAME} | grep ".zip")" ]]; then
+              echo "::set-output name=filename::${NAME%.*}"
+              filename="${NAME%.*}"
+          fi
+          ${{ github.event.inputs.mode }} ${{ github.event.inputs.filelink }} -${{ github.event.inputs.output }} "${filename}.zip"
+          ls -al
+
+      - name: Payload Extracting
+        run: |
+          echo "Payload Dumper"
+          unzip ${{ steps.var.outputs.filename }}.zip
+          rm -rf ${{ steps.var.outputs.filename }}.zip
+          if [[ -f "system.new.dat.br" ]]; then
+              echo "system.new.dat.br Exist"
+              brotli --decompress system.new.dat.br -o system.new.dat
+              ./sdat2img.py system.transfer.list system.new.dat system.img
+          fi
+          if [[ -f "vendor.new.dat.br" ]]; then
+              brotli --decompress vendor.new.dat.br -o vendor.new.dat
+              ./sdat2img.py vendor.transfer.list vendor.new.dat vendor.img
+          fi
+          if [[ -f "payload.bin" ]]; then
+              python3 update-payload-extractor/extract.py payload.bin --output_dir ./
+          fi
+          if [[ -d "firmware-update" ]]; then
+              mv firmware-update/dtbo.img output/dtbo.img
+              mv firmware-update/vbmeta.img output/vbmeta.img
+              rm -rf firmware-update
+          fi
+          if [[ -f "dtbo.img" ]]; then
+              mv dtbo.img output/dtbo.img
+          fi
+          if [[ -f "vbmeta.img" ]]; then
+              mv vbmeta.img output/vbmeta.img
+          fi
+          mv -f META-INF output/
+          ls -al
+          cd ..
+
+      - name: Fstab Extracting
+        run: |
+          mkdir system/
+          sudo mount system.img system/
+          if [[ -f "./vendor.img" ]]; then
+              mkdir vendor/
+              sudo mount vendor.img vendor/
+              sudo cp vendor/etc/fstab.qcom output/fstab.qcom
+              sudo cp vendor/etc/audio_platform_info_intcodec.xml output/audio_platform_info_intcodec.xml
+              sudo cp vendor/etc/audio_platform_info_qrd.xml output/audio_platform_info_qrd.xml
+              sudo cp vendor/etc/mixer_paths_qrd.xml output/mixer_paths_qrd.xml
+              sudo cp vendor/etc/sound_trigger_mixer_paths.xml output/sound_trigger_mixer_paths.xml
+              sudo cp vendor/etc/sound_trigger_mixer_paths_qrd.xml output/sound_trigger_mixer_paths_qrd.xml
+              sudo cp vendor/etc/sound_trigger_platform_info.xml output/sound_trigger_platform_info.xml
+              cat vendor/etc/fstab.qcom
+          else
+              sudo cp system/system/vendor/etc/fstab.qcom output/fstab.qcom
+              cat system/system/vendor/etc/fstab.qcom
+          fi
+          sudo cp system/system/framework/framework-res.apk output/framework-res.apk || true
+          sudo cp system/system/etc/device_features/*.xml output/ || true
+          sudo ls -al system/
+          if [[ -f "system/system/build.prop" ]]; then
+              echo "build.prop"
+              sudo cp system/system/build.prop output/build.prop
+              sudo chmod 777 output/build.prop
+              sudo cat system/system/build.prop
+          fi
+          sudo umount system
+          sudo rm -rf system
+          if [[ -f "./vendor.img" ]]; then
+              sudo umount vendor
+              sudo rm -rf vendor
+          fi
+
+      - name: ramdisk.cpio Extracting
+        run: |
+          mkdir tmp
+          cp boot.img tmp
+          cd tmp
+          ../magiskboot unpack -h boot.img
+          if [[ -f "ramdisk.cpio" ]]; then
+              echo "ramdisk.cpio已存在"
+              cp ramdisk.cpio ../output/
+              ls
+              cpio -i -F ramdisk.cpio
+          fi
+          ls -al
+          cd ..
+
+      - name: img_info&&dtb Extracting
+        run: |
+          echo "mkbooting"
+          cp boot.img mkbootimg/
+          cd mkbootimg
+          ./mkboot boot.img boot
+          rm boot.img
+          cd boot
+          ls -al
+          mv kernel image.gz-dtb
+          ../../split-appended-dtb image.gz-dtb
+          mv *.dtb ../../output/
+          cat img_info
+          cp img_info ../../output/
+          cd ../../
+
+      - name: dtbo.img Extracting
+        run: |
+          echo "mkdting"
+          if [[ -f "output/dtbo.img" ]]; then
+              cp output/dtbo.img dtbo2dts/
+              cd dtbo2dts
+              python dtbo2dtsi.py
+              rm dtbo.img
+              ls -al
+              line="$(grep -n "vbmeta" dtsi.0)"
+              linea="$(echo $line | cut -d ":" -f 1)"
+              lineb="`expr $linea + 24`""p"
+              sed -n "$linea,$lineb" dtsi.*
+              cp dtsi.* ../output/
+              cd ../
+          fi
+
+      - name: vbmeta Extracting
+        continue-on-error: true
+        run: |
+          echo "mkdting"
+          if [[ -f "output/vbmeta.img" ]]; then
+              hexdump -C output/vbmeta.img
+          fi
+
+      - name: Packing
+        run: |
+          echo "packing"
+          cd output
+          ls -al
+
+      - name: Upload to Artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: output
+          path: |
+            output
+          retention-days: 7
