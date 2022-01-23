@@ -1,0 +1,157 @@
+name: unpack
+
+on:
+  workflow_dispatch:
+     inputs:
+       mode:
+         description: 'Download mode(aria2c,curl,axel,wget)'
+         required: true
+         default: 'aria2c'
+       output:
+         description: 'Output(wget=O)'
+         required: true
+         default: 'o'
+       filename:
+         description: 'ROM NAME'
+         required: true
+         default: 'xx.zip'
+       filelink:
+         description: 'ROM LINK'
+         required: true
+       artifact:
+         description: 'Upload to Artifact'
+         required: true
+         default: 'true'
+       extract:
+         description: 'Extract File'
+         required: true
+         default: 'boot'
+
+jobs:
+  unpack:
+    runs-on: ubuntu-18.04
+    continue-on-error: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Initialization environment
+        run: |
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install git openjdk-8-jdk wget curl rsync aria2 python python3 unzip device-tree-compiler brotli simg2img img2simg axel
+          pip3 install protobuf
+          pip install brotli
+
+      - id: var
+        name: Download
+        run: |
+          echo "Download"
+          NAME="${{ github.event.inputs.filename }}"
+          if [[ ! -z "$(echo ${NAME} | grep ".zip")" ]]; then
+              echo "::set-output name=filename::${NAME%.*}"
+              filename="${NAME%.*}"
+          fi
+          ${{ github.event.inputs.mode }} ${{ github.event.inputs.filelink }} -${{ github.event.inputs.output }} "${filename}.zip"
+          ls -al
+
+      - name: Payload Extracting
+        run: |
+          echo "Payload Dumper"
+          unzip ${{ steps.var.outputs.filename }}.zip
+          rm -rf ${{ steps.var.outputs.filename }}.zip
+          if [[ -f "system.new.dat.br" ]]; then
+              echo "system.new.dat.br Exist"
+              brotli --decompress system.new.dat.br -o system.new.dat
+              ./sdat2img.py system.transfer.list system.new.dat system.img
+          fi
+          if [[ -f "vendor.new.dat.br" ]]; then
+              brotli --decompress vendor.new.dat.br -o vendor.new.dat
+              ./sdat2img.py vendor.transfer.list vendor.new.dat vendor.img
+          fi
+          if [[ -f "payload.bin" ]]; then
+              python3 update-payload-extractor/extract.py payload.bin --output_dir ./
+          fi
+          if [[ -d "firmware-update" ]]; then
+              mv firmware-update/*.img ./
+          fi
+          cp ${{ github.event.inputs.extract }}.img output/
+          ls -al
+          cd ..
+
+      - name: Fstab Extracting
+        run: |
+          if [[ -f "./vendor.img" ]]; then
+              echo "vendor"
+              mkdir vendor/
+              sudo mount vendor.img vendor/
+              sudo cp vendor/etc/fstab.qcom output/fstab.qcom
+              cat vendor/etc/fstab.qcom
+              sudo umount vendor
+              sudo rm -rf vendor
+          else
+              echo "system"
+              mkdir system/
+              sudo mount system.img system/
+              sudo cp system/system/vendor/etc/fstab.qcom output/fstab.qcom
+              cat system/system/vendor/etc/fstab.qcom
+              sudo umount system
+              sudo rm -rf system
+          fi
+
+      - name: ramdisk.cpio Extracting
+        run: |
+          mkdir tmp
+          cp boot.img tmp
+          cd tmp
+          ../magiskboot unpack -h boot.img
+          cp ramdisk.cpio ../output/
+          cpio -i -F ramdisk.cpio
+          ls -R
+          cd ..
+
+      - name: img_info Extracting
+        run: |
+          echo "mkbooting"
+          cp boot.img mkbootimg/
+          cd mkbootimg
+          ./mkboot boot.img boot
+          rm boot.img
+          cd boot
+          cat img_info
+          cp img_info ../../output/
+          ls -R
+          cd ../../
+
+      - name: dtbo.img Extracting
+        continue-on-error: true
+        run: |
+          echo "mkdting"
+          if [[ -f "dtbo.img" ]]; then
+              cp dtbo.img dtbo2dts/
+              cd dtbo2dts
+              python dtbo2dtsi.py
+              rm dtbo.img
+              ls -al
+              line="$(grep -n "vbmeta" dtsi.0)"
+              linea="$(echo $line | cut -d ":" -f 1)"
+              lineb="`expr $linea + 24`""p"
+              sed -n "$linea,$lineb" dtsi.*
+              cp dtsi.* ../output/
+              cd ../
+          fi
+
+      - name: Packing
+        run: |
+          echo "packing"
+          cd output
+          ls -al
+
+      - name: Upload to Artifact
+        if: github.event.inputs.artifact == 'true'
+        uses: actions/upload-artifact@v2
+        with:
+          name: output
+          path: |
+            output
+          retention-days: 7
