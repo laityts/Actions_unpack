@@ -11,21 +11,13 @@ on:
          description: 'Output(wget=O)'
          required: true
          default: 'o'
-       filename:
-         description: 'ROM NAME'
-         required: true
-         default: 'xx.zip'
        filelink:
-         description: 'ROM LINK'
+         description: 'Boot Link'
          required: true
        artifact:
          description: 'Upload to Artifact'
          required: true
          default: 'true'
-       extract:
-         description: 'Extract File'
-         required: true
-         default: 'boot'
 
 jobs:
   unpack:
@@ -47,57 +39,8 @@ jobs:
         name: Download
         run: |
           echo "Download"
-          NAME="${{ github.event.inputs.filename }}"
-          if [[ ! -z "$(echo ${NAME} | grep ".zip")" ]]; then
-              echo "::set-output name=filename::${NAME%.*}"
-              filename="${NAME%.*}"
-          fi
-          ${{ github.event.inputs.mode }} ${{ github.event.inputs.filelink }} -${{ github.event.inputs.output }} "${filename}.zip"
+          ${{ github.event.inputs.mode }} ${{ github.event.inputs.filelink }} -${{ github.event.inputs.output }} "boot.img"
           ls -al
-
-      - name: Payload Extracting
-        run: |
-          echo "Payload Dumper"
-          unzip ${{ steps.var.outputs.filename }}.zip
-          rm -rf ${{ steps.var.outputs.filename }}.zip
-          if [[ -f "system.new.dat.br" ]]; then
-              echo "system.new.dat.br Exist"
-              brotli --decompress system.new.dat.br -o system.new.dat
-              ./sdat2img.py system.transfer.list system.new.dat system.img
-          fi
-          if [[ -f "vendor.new.dat.br" ]]; then
-              brotli --decompress vendor.new.dat.br -o vendor.new.dat
-              ./sdat2img.py vendor.transfer.list vendor.new.dat vendor.img
-          fi
-          if [[ -f "payload.bin" ]]; then
-              python3 update-payload-extractor/extract.py payload.bin --output_dir ./
-          fi
-          if [[ -d "firmware-update" ]]; then
-              mv firmware-update/*.img ./
-          fi
-          cp ${{ github.event.inputs.extract }}.img output/
-          ls -al
-          cd ..
-
-      - name: Fstab Extracting
-        run: |
-          if [[ -f "./vendor.img" ]]; then
-              echo "vendor"
-              mkdir vendor/
-              sudo mount vendor.img vendor/
-              sudo cp vendor/etc/fstab.qcom output/fstab.qcom
-              cat vendor/etc/fstab.qcom
-              sudo umount vendor
-              sudo rm -rf vendor
-          else
-              echo "system"
-              mkdir system/
-              sudo mount system.img system/
-              sudo cp system/system/vendor/etc/fstab.qcom output/fstab.qcom
-              cat system/system/vendor/etc/fstab.qcom
-              sudo umount system
-              sudo rm -rf system
-          fi
 
       - name: ramdisk.cpio Extracting
         run: |
@@ -106,11 +49,12 @@ jobs:
           cd tmp
           ../magiskboot unpack -h boot.img
           cp ramdisk.cpio ../output/
+          ls
           cpio -i -F ramdisk.cpio
           ls -R
           cd ..
 
-      - name: img_info Extracting
+      - name: img_info && dts Extracting
         run: |
           echo "mkbooting"
           cp boot.img mkbootimg/
@@ -122,6 +66,23 @@ jobs:
           cp img_info ../../output/
           ls -R
           cd ../../
+          mv mkbootimg/boot/kernel image.gz-dtb
+          ./split-appended-dtb image.gz-dtb
+          ls
+          rm image.gz-dtb
+          for i in `find *.dtb`; do
+              dts=${i%.*}.dts
+              dtc -q -I dtb -O dts -o $dts $i
+              rm -rf $i
+              if [ `grep -c "fstab" $dts` -ne '0' ];then
+                  line="$(grep -n "firmware {" $dts)"
+                  linea="$(echo $line | cut -d ":" -f 1)"
+                  lineb="`expr $linea + 28`""p"
+                  sed -n "$linea,$lineb" $dts
+                  ls
+                  cp $dts output/
+              fi             
+          done
 
       - name: dtbo.img Extracting
         continue-on-error: true
