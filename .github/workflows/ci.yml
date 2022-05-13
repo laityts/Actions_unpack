@@ -1,0 +1,163 @@
+name: miui
+
+on:
+  workflow_dispatch:
+     inputs:
+       mode:
+         description: 'Download mode(aria2c,curl,axel,wget)'
+         required: true
+         default: 'aria2c'
+       output:
+         description: 'Output(wget=O)'
+         required: true
+         default: 'o'
+       filelink:
+         description: 'ROM LINK'
+         required: true
+       rom:
+         description: 'Upload path'
+         required: true
+         default: 'PixelExperience'
+       muse:
+         description: 'Upload ROM to MuseTransfer'
+         required: true
+         default: 'true'
+       we:
+         description: 'Upload ROM to WeTransfer'
+         required: true
+         default: 'true'
+       wss:
+         description: 'Upload ROM to Wenshushu'
+         required: true
+         default: 'false'
+       anon:
+         description: 'Upload ROM to Anonfile'
+         required: true
+         default: 'true'
+       sf:
+         description: 'Upload ROM to Sourceforge'
+         required: true
+         default: 'false'
+
+jobs:
+  miui:
+    runs-on: ubuntu-18.04
+    continue-on-error: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Initialization environment
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y git wget curl aria2 python python3 python3-setuptools unzip axel sshpass openssh-server
+          pip3 install gdown
+
+      - id: var
+        name: Download
+        run: |
+          echo "Download"
+          if [[ ${{ github.event.inputs.filelink }} == *"drive.google.com"* ]]; then
+              if [[ ${{ github.event.inputs.filelink }} == *"file"* ]]; then
+                  DOWNLOAD_LINK=$(echo ${{ github.event.inputs.filelink }} | cut -d / -f 6)
+                  echo "DOWNLOAD_LINK: $DOWNLOAD_LINK"
+                  gdown https://drive.google.com/uc?id=${DOWNLOAD_LINK}
+              elif [[ ${{ github.event.inputs.filelink }} == *"id"* ]]; then
+                  DOWNLOAD_LINK1=$(echo ${{ github.event.inputs.filelink }} | cut -d = -f 2 | cut -d '&' -f 1)
+                  DOWNLOAD_LINK2=$(echo ${{ github.event.inputs.filelink }} | cut -d = -f 4)
+                  echo "DOWNLOAD_LINK1: $DOWNLOAD_LINK1"
+                  echo "DOWNLOAD_LINK2: $DOWNLOAD_LINK2"
+                  gdown https://drive.google.com/uc?id=${DOWNLOAD_LINK1} || gdown https://drive.google.com/uc?id=${DOWNLOAD_LINK2}
+              fi
+          else
+              if [[ ! -z "${{ github.event.inputs.filename }}" ]]; then
+                  FILENAME="${{ github.event.inputs.filename }}"
+                  ${{ github.event.inputs.mode }} ${{ github.event.inputs.filelink }} -${{ github.event.inputs.output }} "$FILENAME"
+              else
+                  ${{ github.event.inputs.mode }} ${{ github.event.inputs.filelink }}
+              fi
+          fi
+          ls
+          FILENAME="$(ls -lS * | head -1 | awk '{print $9}')"
+          echo "FILENAME: $FILENAME"
+          FILENAME=$(basename ${FILENAME})
+          NAME=$(basename $FILENAME .zip)
+          echo "::set-output name=filename::$FILENAME"
+          echo "::set-output name=name::$NAME"
+          MD5SUM=$(md5sum $FILENAME | cut -d' ' -f1)
+          SHA1SUM=$(sha1sum $FILENAME | cut -d' ' -f1)
+          SHA256SUM=$(sha256sum $FILENAME | cut -d' ' -f1)
+          echo "MD5SUM: $MD5SUM"
+          echo "SHA1SUM: $SHA1SUM"
+          echo "SHA256SUM: $SHA256SUM"
+
+      - name: Extracting
+        run: |
+          unzip -l ${{ steps.var.outputs.filename }}
+
+      - id: muse
+        name: Upload to MuseTransfer
+        if: github.event.inputs.muse == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "Upload to MuseTransfer"
+          ls -al
+          curl -fsSL git.io/file-transfer | sh
+          musetrans=$(./transfer muse -s -p 12 --no-progress ${{ steps.var.outputs.filename }})
+          musetrans=$(echo $musetrans | grep -o -E "https[^ ]*")
+          echo "MuseTransfer: $musetrans"
+    
+      - id: we
+        name: Upload to WeTransfer
+        if: github.event.inputs.we == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "Upload to WeTransfer"
+          ls -al
+          curl -fsSL git.io/file-transfer | sh
+          wetrans=$(./transfer wet -s -p 12 --no-progress ${{ steps.var.outputs.filename }})
+          wetrans=$(echo $wetrans | grep -o -E "https[^ ]*")
+          echo "WeTransfer: $wetrans"
+
+      - id: wss
+        name: Upload to Wenshushu
+        if: github.event.inputs.wss == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "Upload to Wenshushu"
+          ls -al
+          curl -fsSL git.io/file-transfer | sh
+          wsstrans=$(./transfer wss --no-progress ${{ steps.var.outputs.filename }})
+          wsstrans=$(echo $wsstrans | grep -o -E "https[^ ]*")
+          echo "Wenshushu: $wsstrans"
+
+      - id: anon
+        name: Upload to Anonfile
+        if: github.event.inputs.anon == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "Upload to Anonfile"
+          ls -al
+          curl -fsSL git.io/file-transfer | sh
+          anontrans=$(./transfer anon --no-progress ${{ steps.var.outputs.filename }})
+          anontrans=$(echo $anontrans | grep -o -E "https[^ ]*")
+          echo "Anonfile: $anontrans"
+
+      - name: Upload to Sourceforge
+        if: github.event.inputs.sf == 'true'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          echo "Upload to Sourceforge"
+          ls -al
+          sshpass -p "${{ secrets.PASSWD }}" scp -o StrictHostKeyChecking=no -o ConnectTimeout=180 ${{ steps.var.outputs.filename }} laityts@frs.sourceforge.net:/home/frs/project/tiffany/${{ github.event.inputs.rom }}/${{ steps.var.outputs.filename }}
+          echo "Download Link: https://sourceforge.net/projects/tiffany/files/${{ github.event.inputs.rom }}/${{ steps.var.outputs.filename }}/download"
+          SFLINK="https://sourceforge.net/projects/tiffany/files/${{ github.event.inputs.rom }}/${{ steps.var.outputs.filename }}/download"
+          echo "Sourceforge: $SFLINK"
+
+
