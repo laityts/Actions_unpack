@@ -56,33 +56,66 @@ jobs:
 
       - name: img_info && dts Extracting
         run: |
-          echo "mkbooting"
-          cp boot.img mkbootimg/
+          echo "Patching boot"
+          mv boot.img mkbootimg
           cd mkbootimg
           ./mkboot boot.img boot
           rm boot.img
           cd boot
-          cat img_info
-          cp img_info ../../output/
-          ls -R
-          cd ../../
-          mv mkbootimg/boot/kernel image.gz-dtb
-          ./split-appended-dtb image.gz-dtb
-          ls
+          ls -al
+          echo "打印出boot下所有文件"
+          echo "**************************************"
+          mv kernel image.gz-dtb
+          ../../split-appended-dtb image.gz-dtb
           rm image.gz-dtb
-          for i in `find *.dtb`; do
-              dts=${i%.*}.dts
-              dtc -q -I dtb -O dts -o $dts $i
-              rm -rf $i
-              if [ `grep -c "fstab" $dts` -ne '0' ];then
-                  line="$(grep -n "firmware {" $dts)"
-                  linea="$(echo $line | cut -d ":" -f 1)"
-                  lineb="`expr $linea + 28`""p"
-                  sed -n "$linea,$lineb" $dts
-                  ls
-                  cp $dts output/
-              fi             
+          ls
+          for i in `find *.dtb`
+          do
+            if [[ ! -z "$(../../fdtget $i /firmware/android/fstab -p 2>/dev/null || true)" ]]; then
+                echo "**************************************"
+                ../../magiskboot dtb $i print -f
+                echo "**************************************"
+                ../../fdtget $i /firmware/android/vbmeta parts 2>/dev/null || true
+                ../../fdtput $i -r /firmware/android/vbmeta
+                echo "**************************************"
+                if [[ ! -z "$(../../fdtget $i /firmware/android/fstab/system -p 2>/dev/null || true)" ]]; then
+                ../../fdtput $i /firmware/android/fstab/vendor dev /dev/block/platform/soc/7824900.sdhci/by-name/vendor -ts
+                ../../fdtput $i /firmware/android/fstab/vendor status disable -ts
+                echo "列出android下的节点"
+                ../../fdtget $i /firmware/android/vbmeta -l 2>/dev/null || true
+                ../../fdtget $i /firmware/android/vbmeta parts 2>/dev/null || true
+                echo "**************************************"
+                ../../magiskboot dtb $i print -f
+                echo "**************************************"
+                dtb=${i##* }
+                dts=${dtb%.*}.dts
+                echo "dtb $dtb"
+                echo "dts $dts"
+                ../../dtc -q -I dtb -O dts -o $dts $dtb
+                line="$(grep -n "firmware {" $dts)"
+                linea="$(echo $line | cut -d ":" -f 1)"
+                line="$(grep -n "reserved-memory" $dts)"
+                lineb="$(echo $line | cut -d ":" -f 1)"
+                lineb="`expr $lineb - 1`""p"
+                echo "**************************************"
+                sed -n "$linea,$lineb" $dts
+                echo "**************************************"
+                mv $dts ../../output/$dts
+            fi
           done
+          echo "**************************************"
+          ls -al
+          echo "**************************************"
+          cat kernel *.dtb > image.gz-dtb
+          rm -f *.dtb
+          rm -f kernel
+          mv image.gz-dtb kernel
+          echo "列出所有文件"
+          echo "**************************************"
+          cd ..
+          ./mkboot boot boot.img
+          cp boot.img ../../output
+          ls -al
 
       - name: dtbo.img Extracting
         continue-on-error: true
