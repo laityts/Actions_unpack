@@ -40,50 +40,30 @@ jobs:
         run: |
           echo "Download"
           ${{ github.event.inputs.mode }} ${{ github.event.inputs.filelink }} -${{ github.event.inputs.output }} "boot.img"
+          mv boot.img output/boot.img
           ls -al
 
-      - name: ramdisk.cpio Extracting
-        run: |
-          mkdir tmp
-          cp boot.img tmp
-          cd tmp
-          ../magiskboot unpack -h boot.img
-          cp ramdisk.cpio ../output/
-          ls
-          cpio -i -F ramdisk.cpio
-          ls -R
-          cd ..
-
-      - name: img_info && dts Extracting
+      - name: boot Patching
         run: |
           echo "Patching boot"
-          mv boot.img mkbootimg
+          mv output/boot.img mkbootimg/
           cd mkbootimg
           ./mkboot boot.img boot
           rm boot.img
           cd boot
-          ls -al
           echo "打印出boot下所有文件"
           echo "**************************************"
+          ls -al
           mv kernel image.gz-dtb
           ../../split-appended-dtb image.gz-dtb
           rm image.gz-dtb
-          ls
-          for i in `find *.dtb`
-          do
+          for i in `find *.dtb`; do
             if [[ ! -z "$(../../fdtget $i /firmware/android/fstab -p 2>/dev/null || true)" ]]; then
                 echo "**************************************"
                 ../../magiskboot dtb $i print -f
                 echo "**************************************"
-                ../../fdtget $i /firmware/android/vbmeta parts 2>/dev/null || true
-                ../../fdtput $i -r /firmware/android/vbmeta
-                echo "**************************************"
-                if [[ ! -z "$(../../fdtget $i /firmware/android/fstab/system -p 2>/dev/null || true)" ]]; then
                 ../../fdtput $i /firmware/android/fstab/vendor dev /dev/block/platform/soc/7824900.sdhci/by-name/vendor -ts
                 ../../fdtput $i /firmware/android/fstab/vendor status disable -ts
-                echo "列出android下的节点"
-                ../../fdtget $i /firmware/android/vbmeta -l 2>/dev/null || true
-                ../../fdtget $i /firmware/android/vbmeta parts 2>/dev/null || true
                 echo "**************************************"
                 ../../magiskboot dtb $i print -f
                 echo "**************************************"
@@ -112,28 +92,12 @@ jobs:
           mv image.gz-dtb kernel
           echo "列出所有文件"
           echo "**************************************"
+          ls -al
+          echo "**************************************"
           cd ..
           ./mkboot boot boot.img
-          cp boot.img ../../output
-          ls -al
-
-      - name: dtbo.img Extracting
-        continue-on-error: true
-        run: |
-          echo "mkdting"
-          if [[ -f "dtbo.img" ]]; then
-              cp dtbo.img dtbo2dts/
-              cd dtbo2dts
-              python dtbo2dtsi.py
-              rm dtbo.img
-              ls -al
-              line="$(grep -n "vbmeta" dtsi.0)"
-              linea="$(echo $line | cut -d ":" -f 1)"
-              lineb="`expr $linea + 24`""p"
-              sed -n "$linea,$lineb" dtsi.*
-              cp dtsi.* ../output/
-              cd ../
-          fi
+          mv boot.img ../output/boot.img
+          cd ..
 
       - name: Packing
         run: |
