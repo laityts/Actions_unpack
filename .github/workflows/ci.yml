@@ -235,13 +235,26 @@ jobs:
           ls -al
           mv kernel image.gz-dtb
           ../../split-appended-dtb image.gz-dtb || true
-          mv *.dtb ../../output/dtb/ || true
-          cd ${GITHUB_WORKSPACE}/output/dtb/
           for i in `find *.dtb`; do
-            echo "$i"
-            dts=${i%.*}.dts
-            ../../dtbo2dts/dtc -q -I dtb -O dts -o $dts $i
+            if [[ ! -z "$(../../fdtget $i /firmware/android/fstab -p 2>/dev/null || true)" ]]; then
+                echo "**************************************"
+                ../../magiskboot dtb $i print -f
+                echo "**************************************"
+                if [[ ! -z "$(../../fdtget $i /firmware/android/fstab/vendor -p 2>/dev/null || true)" ]]; then
+                    ../../fdtput $i /firmware/android/fstab/vendor status disable -ts
+                    ../../fdtput $i /firmware/android/fstab/vendor dev /dev/block/platform/soc/7824900.sdhci/by-name/vendor -ts
+                fi
+                ../../magiskboot dtb $i print -f
+            fi
           done
+          cat kernel *.dtb > image.gz-dtb
+          rm -f *.dtb
+          rm -f kernel
+          mv image.gz-dtb kernel
+          ls -al
+          cd ..
+          ./mkboot boot boot.img
+          cp boot.img ../output/
           cd ${GITHUB_WORKSPACE}/mkbootimg/boot
           cat img_info
           cp img_info ../../output/
@@ -280,7 +293,7 @@ jobs:
           ls -al
 
       - name: Upload to Artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: output
           path: |
