@@ -33,6 +33,10 @@ on:
          description: 'power_profile Extracting'
          required: true
          default: 'true'
+       unpack:
+         description: 'Unpack'
+         required: true
+         default: 'false'
 
 jobs:
   unpack:
@@ -130,6 +134,7 @@ jobs:
           cd ..
 
       - name: Fstab Extracting
+        if: github.event.inputs.unpack == 'true'
         continue-on-error: true
         run: |
           mkdir system/
@@ -197,6 +202,7 @@ jobs:
           fi
 
       - name: ramdisk.cpio Extracting
+        if: github.event.inputs.unpack == 'true'
         continue-on-error: true
         run: |
           cp boot.img tmp
@@ -212,6 +218,7 @@ jobs:
           cd ..
 
       - name: mkboot
+        if: github.event.inputs.unpack == 'true'
         continue-on-error: true
         run: |
           echo "mkbooting"
@@ -224,6 +231,7 @@ jobs:
           ls
 
       - name: img_info&&dtb Extracting
+        if: github.event.inputs.unpack == 'true'
         continue-on-error: true
         run: |
           echo "mkbooting"
@@ -248,6 +256,7 @@ jobs:
           cd ../../
 
       - name: dtbo.img Extracting
+        if: github.event.inputs.unpack == 'true'
         continue-on-error: true
         run: |
           echo "mkdting"
@@ -266,6 +275,7 @@ jobs:
           fi
 
       - name: vbmeta Extracting
+        if: github.event.inputs.unpack == 'true'
         continue-on-error: true
         run: |
           echo "mkdting"
