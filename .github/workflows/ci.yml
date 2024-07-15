@@ -24,15 +24,15 @@ on:
        audio:
          description: 'Audio XML Extracting'
          required: true
-         default: 'true'
+         default: 'false'
        acdb:
          description: 'ACDB Extracting'
          required: true
-         default: 'true'
+         default: 'false'
        power_profile:
          description: 'power_profile Extracting'
          required: true
-         default: 'true'
+         default: 'false'
        unpack:
          description: 'Unpack'
          required: true
