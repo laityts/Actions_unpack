@@ -296,3 +296,24 @@ jobs:
           path: |
             output
           retention-days: 7
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: boot-${{ steps.var.outputs.name }}
+          release_name: Boot Image ${{ steps.var.outputs.name }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Boot Image to Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./output/boot.img
+          asset_name: boot.img
+          asset_content_type: application/octet-stream
